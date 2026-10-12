@@ -1,0 +1,13 @@
+{
+  "name": "himsafe",
+  "version": "1.0.0",
+  "description": "Community-driven road status and incident reporting platform",
+  "private": true,
+  "scripts": {
+    "client": "npm run dev --prefix client",
+    "server": "npm run dev --prefix server"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.4"
+  }
+}

@@ -1,0 +1,22 @@
+node_modules/
+.env
+.env.*
+!.env.example
+
+dist/
+build/
+
+*.log
+
+.DS_Store
+Thumbs.db
+
+.vscode/
+
+server-backup-20261009-220641/
+
+# Local backup files
+*.backup
+*.mobile-backup
+client/EmergencyDashboard-source.txt
+server/app.js.analytics-backup
