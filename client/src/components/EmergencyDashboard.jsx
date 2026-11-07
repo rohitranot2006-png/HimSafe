@@ -106,7 +106,12 @@ function EmergencyDashboard() {
             console.error("Socket.IO: Login token not found.");
             setSocketOnline(false);
         } else {
-            socket = io({
+            // Local development uses Vite proxy.
+            // Production connects directly to the Render backend.
+            const SOCKET_URL =
+                import.meta.env.VITE_SOCKET_URL || window.location.origin;
+
+            socket = io(SOCKET_URL, {
                 path: "/socket.io",
                 transports: ["websocket", "polling"],
                 auth: {
