@@ -20,3 +20,11 @@ server-backup-20261009-220641/
 *.mobile-backup
 client/EmergencyDashboard-source.txt
 server/app.js.analytics-backup
+
+# Local HTTPS certificates
+server/certs/
+
+# Local-only scripts
+server/update-account-phone.js
+server/scripts/
+server/generate-cert.js

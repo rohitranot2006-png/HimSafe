@@ -178,7 +178,7 @@ function HomePage() {
                         );
                     }
                 } catch (error) {
-                    console.error("SOS API error:", error);
+                   console.error("SOS API error:", error.response?.data || error.message);
 
                     setSosMessage(
                         "Unable to send SOS alert to HimSafe server"

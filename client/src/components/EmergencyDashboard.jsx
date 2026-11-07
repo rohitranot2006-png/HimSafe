@@ -32,9 +32,11 @@ function EmergencyDashboard() {
                 response.data.alerts ??
                 []
             );
+
             setServerOnline(true);
         } catch (error) {
             console.error("Dashboard error:", error);
+            setServerOnline(false);
             setMessage("Unable to load emergency alerts. Check the API connection.");
         } finally {
             setLoading(false);
@@ -56,9 +58,11 @@ function EmergencyDashboard() {
                 response.data.alerts ??
                 []
             );
+
             setServerOnline(true);
         } catch (error) {
             console.error("History error:", error);
+            setServerOnline(false);
             setMessage("Unable to load SOS history. Please try refreshing.");
         } finally {
             setHistoryLoading(false);
@@ -72,8 +76,10 @@ function EmergencyDashboard() {
         ]);
     }, [loadAlerts, loadHistory]);
 
+    // Dashboard data and authenticated Socket.IO connection
     useEffect(() => {
         let refreshInProgress = false;
+        let socket = null;
 
         const refreshDashboard = async (showLoading = false) => {
             if (refreshInProgress) return;
@@ -93,47 +99,78 @@ function EmergencyDashboard() {
             refreshDashboard();
         }, 10000);
 
-        const socket = io({
-            path: "/socket.io",
-            transports: ["websocket", "polling"],
-        });
+        // Read the same JWT token used by api.js
+        const token = localStorage.getItem("himsafe_token");
 
-        socket.on("connect", () => setSocketOnline(true));
-        socket.on("disconnect", () => setSocketOnline(false));
-
-        socket.on("connect_error", (error) => {
+        if (!token) {
+            console.error("Socket.IO: Login token not found.");
             setSocketOnline(false);
-            console.error("Socket.IO connection error:", error.message);
-        });
+        } else {
+            socket = io({
+                path: "/socket.io",
+                transports: ["websocket", "polling"],
+                auth: {
+                    token: token,
+                },
+            });
 
-        const handleEmergencyUpdate = (emergency) => {
-            const status = emergency?.status || "UPDATED";
-            const id = emergency?.id || emergency?._id;
-            const incidentId = id ? ` · Incident ${String(id).slice(-8)}` : "";
+            socket.on("connect", () => {
+                console.log("Socket.IO connected:", socket.id);
+                setSocketOnline(true);
+            });
 
-            setNotification(
-                `${status === "ACTIVE" ? "New SOS alert received" :
-                    status === "ACKNOWLEDGED" ? "Emergency acknowledged" :
-                        status === "RESOLVED" ? "Emergency resolved" :
-                            "Emergency information updated"}${incidentId}`
-            );
+            socket.on("disconnect", (reason) => {
+                console.log("Socket.IO disconnected:", reason);
+                setSocketOnline(false);
+            });
 
-            refreshDashboard();
-        };
+            socket.on("connect_error", (error) => {
+                setSocketOnline(false);
 
-        socket.on("sos:created", handleEmergencyUpdate);
-        socket.on("emergencies:updated", handleEmergencyUpdate);
-        socket.on("sos:location-updated", handleEmergencyUpdate);
+                console.error(
+                    "Socket.IO connection error:",
+                    error.message
+                );
+            });
+
+            const handleEmergencyUpdate = (emergency) => {
+                const status = emergency?.status || "UPDATED";
+                const id = emergency?.id || emergency?._id;
+
+                const incidentId = id
+                    ? ` · Incident ${String(id).slice(-8)}`
+                    : "";
+
+                setNotification(
+                    `${status === "ACTIVE"
+                        ? "New SOS alert received"
+                        : status === "ACKNOWLEDGED"
+                            ? "Emergency acknowledged"
+                            : status === "RESOLVED"
+                                ? "Emergency resolved"
+                                : "Emergency information updated"
+                    }${incidentId}`
+                );
+
+                refreshDashboard();
+            };
+
+            socket.on("sos:created", handleEmergencyUpdate);
+            socket.on("emergencies:updated", handleEmergencyUpdate);
+            socket.on("sos:location-updated", handleEmergencyUpdate);
+        }
 
         return () => {
             clearInterval(interval);
-            socket.off("sos:created", handleEmergencyUpdate);
-            socket.off("emergencies:updated", handleEmergencyUpdate);
-            socket.off("sos:location-updated", handleEmergencyUpdate);
-            socket.disconnect();
+
+            if (socket) {
+                socket.removeAllListeners();
+                socket.disconnect();
+            }
         };
     }, [loadDashboard]);
 
+    // Update emergency status
     const updateEmergency = async (id, action) => {
         try {
             setActionId(id);
@@ -147,6 +184,7 @@ function EmergencyDashboard() {
                         ? "Emergency acknowledged successfully."
                         : "Emergency resolved successfully."
                 );
+
                 await loadDashboard();
             }
         } catch (error) {
@@ -159,6 +197,7 @@ function EmergencyDashboard() {
 
     const getId = (item) => String(item?.id || item?._id || "");
 
+    // Open emergency location in Google Maps
     const openLocation = (latitude, longitude) => {
         const lat = Number(latitude);
         const lng = Number(longitude);
@@ -210,6 +249,7 @@ function EmergencyDashboard() {
         return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
     };
 
+    // Emergency statistics
     const activeCount = history.filter(
         (item) => item.status === "ACTIVE"
     ).length;
@@ -223,7 +263,8 @@ function EmergencyDashboard() {
     ).length;
 
     const filteredHistory = history.filter((item) => {
-        return historyFilter === "ALL" || item.status === historyFilter;
+        return historyFilter === "ALL" ||
+            item.status === historyFilter;
     });
 
     const serviceNames = (services) => {
@@ -231,14 +272,19 @@ function EmergencyDashboard() {
 
         return Object.entries(services)
             .filter(([, enabled]) => enabled === true)
-            .map(([name]) => name.charAt(0).toUpperCase() + name.slice(1));
+            .map(([name]) =>
+                name.charAt(0).toUpperCase() + name.slice(1)
+            );
     };
 
     return (
         <div className="emergency-dashboard">
+
+            {/* Navigation */}
             <header className="dashboard-navbar">
                 <a className="dashboard-logo" href="/" aria-label="HimSafe home">
                     <span className="dashboard-logo-icon">🛡️</span>
+
                     <span className="dashboard-logo-copy">
                         <strong>HimSafe</strong>
                         <span>Emergency Safety Platform</span>
@@ -256,6 +302,7 @@ function EmergencyDashboard() {
                         <span className="connection-dot" />
                         {serverOnline ? "API Online" : "API Offline"}
                     </span>
+
                     <span className={`connection-pill ${socketOnline ? "online" : "offline"}`}>
                         <span className="connection-dot" />
                         {socketOnline ? "Live Connected" : "Live Disconnected"}
@@ -264,11 +311,20 @@ function EmergencyDashboard() {
             </header>
 
             <main className="dashboard-main">
+
+                {/* Dashboard heading */}
                 <section className="dashboard-heading">
                     <div>
-                        <span className="dashboard-eyebrow">HIMSAFE CONTROL CENTER</span>
+                        <span className="dashboard-eyebrow">
+                            HIMSAFE CONTROL CENTER
+                        </span>
+
                         <h1>Emergency Dashboard</h1>
-                        <p>Monitor SOS alerts, review incident history, and manage emergencies in one place.</p>
+
+                        <p>
+                            Monitor SOS alerts, review incident history,
+                            and manage emergencies in one place.
+                        </p>
                     </div>
 
                     <button
@@ -277,29 +333,52 @@ function EmergencyDashboard() {
                         onClick={() => loadDashboard(true)}
                         disabled={loading || historyLoading}
                     >
-                        <span aria-hidden="true">{loading || historyLoading ? "⏳" : "↻"}</span>
-                        {loading || historyLoading ? "Refreshing..." : "Refresh data"}
+                        <span aria-hidden="true">
+                            {loading || historyLoading ? "⏳" : "↻"}
+                        </span>
+
+                        {loading || historyLoading
+                            ? "Refreshing..."
+                            : "Refresh data"}
                     </button>
                 </section>
 
+                {/* Notifications */}
                 {notification && (
                     <div className="dashboard-notification" role="status">
                         <span className="notification-symbol">🔔</span>
                         <span>{notification}</span>
-                        <button type="button" onClick={() => setNotification("")} aria-label="Dismiss notification">×</button>
+
+                        <button
+                            type="button"
+                            onClick={() => setNotification("")}
+                            aria-label="Dismiss notification"
+                        >
+                            ×
+                        </button>
                     </div>
                 )}
 
                 {message && (
                     <div className="dashboard-message" role="status">
                         <span>{message}</span>
-                        <button type="button" onClick={() => setMessage("")} aria-label="Dismiss message">×</button>
+
+                        <button
+                            type="button"
+                            onClick={() => setMessage("")}
+                            aria-label="Dismiss message"
+                        >
+                            ×
+                        </button>
                     </div>
                 )}
 
+                {/* Statistics */}
                 <section className="dashboard-stats" aria-label="Emergency statistics">
+
                     <article className="stat-card stat-total">
                         <span className="stat-icon">📋</span>
+
                         <div className="stat-copy">
                             <span>Total SOS Records</span>
                             <strong>{history.length}</strong>
@@ -309,6 +388,7 @@ function EmergencyDashboard() {
 
                     <article className="stat-card stat-active">
                         <span className="stat-icon">🚨</span>
+
                         <div className="stat-copy">
                             <span>Active Emergencies</span>
                             <strong>{activeCount}</strong>
@@ -318,6 +398,7 @@ function EmergencyDashboard() {
 
                     <article className="stat-card stat-acknowledged">
                         <span className="stat-icon">◉</span>
+
                         <div className="stat-copy">
                             <span>Acknowledged</span>
                             <strong>{acknowledgedCount}</strong>
@@ -327,6 +408,7 @@ function EmergencyDashboard() {
 
                     <article className="stat-card stat-resolved">
                         <span className="stat-icon">✓</span>
+
                         <div className="stat-copy">
                             <span>Resolved</span>
                             <strong>{resolvedCount}</strong>
@@ -335,27 +417,41 @@ function EmergencyDashboard() {
                     </article>
                 </section>
 
+                {/* Active emergencies */}
                 <section className="dashboard-panel">
                     <div className="section-title">
                         <div>
-                            <span className="section-eyebrow">LIVE MONITORING</span>
+                            <span className="section-eyebrow">
+                                LIVE MONITORING
+                            </span>
+
                             <h2>Active Emergencies</h2>
-                            <p>Review current incidents and update their status.</p>
+
+                            <p>
+                                Review current incidents and update their status.
+                            </p>
                         </div>
-                        <span className="section-count">{alerts.length} active</span>
+
+                        <span className="section-count">
+                            {alerts.length} active
+                        </span>
                     </div>
 
                     {loading ? (
                         <div className="dashboard-empty">
                             <span className="empty-icon">⏳</span>
                             <h3>Loading emergencies</h3>
-                            <p>Retrieving the latest emergency information...</p>
+                            <p>
+                                Retrieving the latest emergency information...
+                            </p>
                         </div>
                     ) : alerts.length === 0 ? (
                         <div className="dashboard-empty">
                             <span className="empty-icon">✓</span>
                             <h3>No active emergencies</h3>
-                            <p>There are no active or acknowledged emergencies right now.</p>
+                            <p>
+                                There are no active or acknowledged emergencies right now.
+                            </p>
                         </div>
                     ) : (
                         <div className="emergency-list">
@@ -366,29 +462,50 @@ function EmergencyDashboard() {
                                     <article className="emergency-card" key={id}>
                                         <div className="emergency-card-top">
                                             <div className="emergency-card-title">
-                                                <span className="emergency-icon">🚨</span>
+                                                <span className="emergency-icon">
+                                                    🚨
+                                                </span>
+
                                                 <div>
                                                     <h3>SOS Emergency</h3>
-                                                    <span className="incident-id">Incident ID: {id.slice(-8) || "Unavailable"}</span>
+
+                                                    <span className="incident-id">
+                                                        Incident ID: {id.slice(-8) || "Unavailable"}
+                                                    </span>
                                                 </div>
                                             </div>
+
                                             <span className={`alert-status ${(alert.status || "unknown").toLowerCase()}`}>
                                                 {alert.status || "UNKNOWN"}
                                             </span>
                                         </div>
 
                                         <div className="emergency-details">
-                                            <p><span>📍</span> {formatCoordinates(alert.latitude, alert.longitude)}</p>
-                                            <p><span>🕒</span> {formatDate(alert.createdAt)}</p>
+                                            <p>
+                                                <span>📍</span>{" "}
+                                                {formatCoordinates(
+                                                    alert.latitude,
+                                                    alert.longitude
+                                                )}
+                                            </p>
+
+                                            <p>
+                                                <span>🕒</span>{" "}
+                                                {formatDate(alert.createdAt)}
+                                            </p>
                                         </div>
 
                                         <div className="service-tags">
                                             {serviceNames(alert.services).length ? (
                                                 serviceNames(alert.services).map((service) => (
-                                                    <span className="service-tag" key={service}>{service}</span>
+                                                    <span className="service-tag" key={service}>
+                                                        {service}
+                                                    </span>
                                                 ))
                                             ) : (
-                                                <span className="service-tag">No services specified</span>
+                                                <span className="service-tag">
+                                                    No services specified
+                                                </span>
                                             )}
                                         </div>
 
@@ -396,7 +513,12 @@ function EmergencyDashboard() {
                                             <button
                                                 type="button"
                                                 className="location-button"
-                                                onClick={() => openLocation(alert.latitude, alert.longitude)}
+                                                onClick={() =>
+                                                    openLocation(
+                                                        alert.latitude,
+                                                        alert.longitude
+                                                    )
+                                                }
                                             >
                                                 ↗ View location
                                             </button>
@@ -406,9 +528,13 @@ function EmergencyDashboard() {
                                                     type="button"
                                                     className="acknowledge-button"
                                                     disabled={actionId === id}
-                                                    onClick={() => updateEmergency(id, "acknowledge")}
+                                                    onClick={() =>
+                                                        updateEmergency(id, "acknowledge")
+                                                    }
                                                 >
-                                                    {actionId === id ? "Updating..." : "Acknowledge"}
+                                                    {actionId === id
+                                                        ? "Updating..."
+                                                        : "Acknowledge"}
                                                 </button>
                                             )}
 
@@ -417,9 +543,13 @@ function EmergencyDashboard() {
                                                     type="button"
                                                     className="resolve-button"
                                                     disabled={actionId === id}
-                                                    onClick={() => updateEmergency(id, "resolve")}
+                                                    onClick={() =>
+                                                        updateEmergency(id, "resolve")
+                                                    }
                                                 >
-                                                    {actionId === id ? "Updating..." : "Resolve"}
+                                                    {actionId === id
+                                                        ? "Updating..."
+                                                        : "Resolve"}
                                                 </button>
                                             )}
                                         </div>
@@ -430,17 +560,30 @@ function EmergencyDashboard() {
                     )}
                 </section>
 
+                {/* SOS History */}
                 <section className="dashboard-panel">
                     <div className="section-title history-heading">
                         <div>
-                            <span className="section-eyebrow">INCIDENT RECORDS</span>
+                            <span className="section-eyebrow">
+                                INCIDENT RECORDS
+                            </span>
+
                             <h2>SOS History</h2>
-                            <p>Review previous alerts and open their locations.</p>
+
+                            <p>
+                                Review previous alerts and open their locations.
+                            </p>
                         </div>
 
                         <label className="history-filter">
                             <span>Filter status</span>
-                            <select value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value)}>
+
+                            <select
+                                value={historyFilter}
+                                onChange={(event) =>
+                                    setHistoryFilter(event.target.value)
+                                }
+                            >
                                 <option value="ALL">All records</option>
                                 <option value="ACTIVE">Active</option>
                                 <option value="ACKNOWLEDGED">Acknowledged</option>
@@ -450,7 +593,11 @@ function EmergencyDashboard() {
                     </div>
 
                     <div className="history-summary">
-                        <span>{filteredHistory.length} record{filteredHistory.length !== 1 ? "s" : ""} shown</span>
+                        <span>
+                            {filteredHistory.length} record
+                            {filteredHistory.length !== 1 ? "s" : ""} shown
+                        </span>
+
                         <span>{history.length} total</span>
                     </div>
 
@@ -458,13 +605,17 @@ function EmergencyDashboard() {
                         <div className="dashboard-empty">
                             <span className="empty-icon">⏳</span>
                             <h3>Loading SOS history</h3>
-                            <p>Retrieving previous emergency records...</p>
+                            <p>
+                                Retrieving previous emergency records...
+                            </p>
                         </div>
                     ) : filteredHistory.length === 0 ? (
                         <div className="dashboard-empty">
                             <span className="empty-icon">📋</span>
                             <h3>No records found</h3>
-                            <p>There are no SOS records matching this filter.</p>
+                            <p>
+                                There are no SOS records matching this filter.
+                            </p>
                         </div>
                     ) : (
                         <div className="history-list">
@@ -475,13 +626,31 @@ function EmergencyDashboard() {
                                     <article className="history-card" key={id}>
                                         <div className="history-main">
                                             <span className={`history-icon history-icon-${(alert.status || "unknown").toLowerCase()}`}>
-                                                {alert.status === "RESOLVED" ? "✓" : alert.status === "ACKNOWLEDGED" ? "◉" : "🚨"}
+                                                {alert.status === "RESOLVED"
+                                                    ? "✓"
+                                                    : alert.status === "ACKNOWLEDGED"
+                                                        ? "◉"
+                                                        : "🚨"}
                                             </span>
+
                                             <div className="history-details">
                                                 <h3>SOS Emergency</h3>
-                                                <span className="incident-id">Incident ID: {id.slice(-8) || "Unavailable"}</span>
-                                                <p>📍 {formatCoordinates(alert.latitude, alert.longitude)}</p>
-                                                <p>🕒 {formatDate(alert.createdAt)}</p>
+
+                                                <span className="incident-id">
+                                                    Incident ID: {id.slice(-8) || "Unavailable"}
+                                                </span>
+
+                                                <p>
+                                                    📍{" "}
+                                                    {formatCoordinates(
+                                                        alert.latitude,
+                                                        alert.longitude
+                                                    )}
+                                                </p>
+
+                                                <p>
+                                                    🕒 {formatDate(alert.createdAt)}
+                                                </p>
                                             </div>
                                         </div>
 
@@ -489,10 +658,16 @@ function EmergencyDashboard() {
                                             <span className={`alert-status ${(alert.status || "unknown").toLowerCase()}`}>
                                                 {alert.status || "UNKNOWN"}
                                             </span>
+
                                             <button
                                                 type="button"
                                                 className="history-location-button"
-                                                onClick={() => openLocation(alert.latitude, alert.longitude)}
+                                                onClick={() =>
+                                                    openLocation(
+                                                        alert.latitude,
+                                                        alert.longitude
+                                                    )
+                                                }
                                             >
                                                 ↗ Location
                                             </button>
@@ -504,29 +679,51 @@ function EmergencyDashboard() {
                     )}
                 </section>
 
+                {/* Emergency Map */}
                 <section className="dashboard-panel dashboard-map-section">
                     <div className="section-title">
                         <div>
-                            <span className="section-eyebrow">LOCATION MONITORING</span>
+                            <span className="section-eyebrow">
+                                LOCATION MONITORING
+                            </span>
+
                             <h2>Emergency Map</h2>
-                            <p>View emergency locations on the HimSafe map.</p>
+
+                            <p>
+                                View emergency locations on the HimSafe map.
+                            </p>
                         </div>
-                        <span className="map-section-tag">◉ Map view</span>
+
+                        <span className="map-section-tag">
+                            ◉ Map view
+                        </span>
                     </div>
 
                     <div className="dashboard-map">
                         <HimSafeMap />
                     </div>
                 </section>
+
             </main>
 
+            {/* Footer */}
             <footer className="dashboard-footer">
-                <p><span>🛡️</span> © 2026 HimSafe · Emergency Safety Platform</p>
+                <p>
+                    <span>🛡️</span> © 2026 HimSafe · Emergency Safety Platform
+                </p>
+
                 <p>
                     <span className={`footer-status-dot ${serverOnline ? "online" : "offline"}`} />
-                    {serverOnline ? "Connected to API" : "API connection unavailable"}
+
+                    {serverOnline
+                        ? "Connected to API"
+                        : "API connection unavailable"}
+
                     {" · "}
-                    {socketOnline ? "Live notifications active" : "Live notifications disconnected"}
+
+                    {socketOnline
+                        ? "Live notifications active"
+                        : "Live notifications disconnected"}
                 </p>
             </footer>
         </div>
